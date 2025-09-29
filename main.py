@@ -1,11 +1,22 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
+import random
 import os
+from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI()
 load_dotenv()
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # Vite's default port
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Configure Gemini API
 # Set your API key as environment variable: export GEMINI_API_KEY="your-api-key"
@@ -46,8 +57,27 @@ async def generate_topic(prep_time: int, speaking_time: int):
     else:
         num_bullets = "5-6"
 
+    random_seed = random.randint(1, 1000000)
+    categories = [
+        "technology",
+        "psychology",
+        "nature",
+        "society",
+        "science",
+        "arts",
+        "philosophy",
+        "history",
+        "culture",
+        "sports",
+        "health",
+        "education",
+    ]
+    random_category = random.choice(categories)
+
     # Create prompt for Gemini
-    prompt = f"""Generate a speech topic suitable for someone with {prep_time} seconds to prepare and {speaking_time} seconds to speak.
+    prompt = f"""
+[ID: {random_seed}] Generate a UNIQUE and CREATIVE speech topic suitable for someone with {prep_time} seconds to prepare and {speaking_time} seconds to speak.
+Be creative and generate something different each time. Vary the topics across different categories in {random_category}.
 
 The topic should be:
 - Appropriate for the given time constraints
@@ -68,12 +98,20 @@ BULLETS:
 Generate exactly {num_bullets} bullet points that are:
 - Key points to cover in the speech
 - Concise and clear
-- Helpful for structuring the speech within {speaking_time} seconds"""
+- Helpful for structuring the speech within {speaking_time} seconds
+- Do not use "**..**" like bold, italics or anything. Return text with no formatting at all always.
+"""
 
     try:
         # Generate content using Gemini
         response = client.models.generate_content(
-            model="gemini-2.0-flash-001", contents=prompt
+            model="gemini-2.0-flash-001",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=2,
+                top_p=0.95,
+                top_k=40,
+            ),
         )
         response_text = response.text
 
@@ -121,6 +159,7 @@ Generate exactly {num_bullets} bullet points that are:
         )
 
     except Exception as e:
+        print(str(e))
         raise HTTPException(status_code=500, detail=f"Error generating topic: {str(e)}")
 
 
