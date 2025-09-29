@@ -77,7 +77,9 @@ async def generate_topic(prep_time: int, speaking_time: int):
     # Create prompt for Gemini
     prompt = f"""
 [ID: {random_seed}] Generate a UNIQUE and CREATIVE speech topic suitable for someone with {prep_time} seconds to prepare and {speaking_time} seconds to speak.
-Be creative and generate something different each time. Vary the topics across different categories in {random_category}.
+Be creative and generate something different each time. Vary the topics across different categories in {random_category}. However, the topic should be such that
+the speaker should be able to easily talk about it for {speaking_time}. It shouldn't require niche general knowledge, we are testing speaker's impromptu ability
+over actual facts and history.
 
 The topic should be:
 - Appropriate for the given time constraints
