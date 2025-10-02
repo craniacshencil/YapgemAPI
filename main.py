@@ -181,6 +181,7 @@ class AnalyzeRequest(BaseModel):
     transcript: str
     duration: float  # total audio duration in seconds (optional but passed)
     speakTime: float  # speaking time (seconds) - front-end already sends this
+    topic: str  # Topic for the speech.
 
 
 class GrammarIssue(BaseModel):
@@ -269,7 +270,7 @@ def restore_sentence_boundaries(
         return []
     chunks = []
     for i in range(0, len(tokens), max_tokens_per_sentence):
-        chunk = " ".join(tokens[i: i + max_tokens_per_sentence])
+        chunk = " ".join(tokens[i : i + max_tokens_per_sentence])
         chunks.append(simple_preprocess(chunk))
     return chunks
 
@@ -359,6 +360,7 @@ def analyze_speech(req: AnalyzeRequest):
     transcript = req.transcript or ""
     duration = req.duration or 0.0
     speakTime = req.speakTime or 0.0
+    topic = req.topic or 0.0
     print("Analyze speech hit")
 
     # basic validation
@@ -416,7 +418,7 @@ def analyze_speech(req: AnalyzeRequest):
 
     # ---- Keyword extraction (TF-IDF) ----
     keywords, keyword_scores = extract_keywords_tfidf(transcript, top_n=8)
-    topic_string = " ".join(keywords) if keywords else ""
+    topic_string = topic or " ".join(keywords) if keywords else ""
 
     # ---- Embeddings + semantic similarity ----
     # We'll compute embedding for the transcript and for the topic_string (keywords joined).
@@ -424,9 +426,7 @@ def analyze_speech(req: AnalyzeRequest):
     # or change the code to compute embeddings against a topic set.
     try:
         emb_transcript = sbert.encode(transcript, convert_to_tensor=True)
-        emb_topic = sbert.encode(
-            topic_string if topic_string else transcript, convert_to_tensor=True
-        )
+        emb_topic = sbert.encode(topic_string, convert_to_tensor=True)
         semantic_similarity = calc_cosine_similarity(emb_transcript, emb_topic)
     except Exception as e:
         print("Embedding error:", e)
