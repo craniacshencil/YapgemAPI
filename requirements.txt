@@ -7,3 +7,5 @@ scikit-learn
 sentence-transformers
 vaderSentiment
 textstat
+nvidia/label/cuda-12.8.0
+cudnn
