@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
@@ -7,7 +7,6 @@ import random
 import os
 from fastapi.middleware.cors import CORSMiddleware
 import re
-import math
 from typing import List, Dict, Any
 from functools import lru_cache
 import spacy
@@ -17,6 +16,8 @@ import numpy as np
 from sentence_transformers import SentenceTransformer, util
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import textstat
+import tempfile
+from faster_whisper import WhisperModel
 
 load_dotenv()
 app = FastAPI()
@@ -354,37 +355,117 @@ def calc_cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
     return float(util.cos_sim(vec1, vec2).item())
 
 
-# --- API endpoint --- #
-@app.post("/api/analyze-speech", response_model=AnalyzeResponse)
-def analyze_speech(req: AnalyzeRequest):
-    transcript = req.transcript or ""
-    duration = req.duration or 0.0
-    speakTime = req.speakTime or 0.0
-    topic = req.topic or 0.0
-    print("Analyze speech hit")
+@lru_cache(maxsize=1)
+def load_whisper_model(model_size: str = "small", compute_type: str = "float16"):
+    """
+    Load and cache the Faster Whisper model.
+    Uses GPU if available, falls back to CPU.
+    """
+    try:
+        model = WhisperModel(model_size, device="cuda", compute_type=compute_type)
+        print(f"Loaded Faster Whisper model: {model_size} on CUDA")
+    except Exception as e:
+        print(f"CUDA not available, falling back to CPU: {e}")
+        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    return model
 
-    # basic validation
-    if not isinstance(transcript, str) or len(transcript.strip()) == 0:
+
+def transcribe_audio_file(audio_path: str, model_size: str = "small") -> str:
+    """
+    Transcribe audio file using Faster Whisper.
+    Returns the full transcript as a single string.
+    """
+    model = load_whisper_model(model_size=model_size)
+
+    segments, info = model.transcribe(audio_path)
+    print(f"Detected language: {info.language}")
+
+    transcript_parts = []
+    for segment in segments:
+        print(f"[{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
+        transcript_parts.append(segment.text)
+
+    full_transcript = " ".join(transcript_parts)
+    return full_transcript
+
+
+@app.post("/api/analyze-speech", response_model=AnalyzeResponse)
+async def analyze_speech(
+    audio: UploadFile = File(...),
+    duration: float = Form(...),
+    speakTime: float = Form(...),
+    topic: str = Form(""),
+    whisper_model: str = Form("small"),  # Allow client to specify model size
+):
+    """
+    Analyze speech from an audio file.
+
+    Args:
+        audio: Audio file (WAV, MP3, M4A, etc.)
+        duration: Total audio duration in seconds
+        speakTime: Speaking time in seconds
+        topic: Topic for the speech
+        whisper_model: Whisper model size (tiny, base, small, medium, large)
+    """
+    print("Analyze speech endpoint hit")
+
+    # Validate audio file
+    if not audio.content_type.startswith("audio/"):
         raise HTTPException(
-            status_code=400, detail="Transcript must be a non-empty string"
+            status_code=400,
+            detail=f"Invalid file type: {audio.content_type}. Please upload an audio file.",
+        )
+
+    # Save uploaded file to temporary location
+    temp_audio_path = None
+    try:
+        # Create temporary file with appropriate extension
+        suffix = os.path.splitext(audio.filename)[1] or ".wav"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+            temp_audio_path = temp_file.name
+            # Read and write file content
+            content = await audio.read()
+            temp_file.write(content)
+
+        print(f"Audio file saved to: {temp_audio_path}")
+
+        # Transcribe audio using Faster Whisper
+        print(f"Starting transcription with model: {whisper_model}")
+        transcript = transcribe_audio_file(temp_audio_path, model_size=whisper_model)
+        print(f"Transcription complete: {len(transcript)} characters")
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error processing audio file: {str(e)}"
+        )
+    finally:
+        # Clean up temporary file
+        if temp_audio_path and os.path.exists(temp_audio_path):
+            try:
+                os.unlink(temp_audio_path)
+                print(f"Cleaned up temporary file: {temp_audio_path}")
+            except Exception as e:
+                print(f"Warning: Could not delete temp file: {e}")
+
+    # Validate transcript
+    if not transcript or len(transcript.strip()) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not extract transcript from audio. The audio might be empty or unclear.",
         )
 
     transcript = simple_preprocess(transcript)
 
-    # load models
+    # Load models
     nlp = load_spacy()
     langtool = load_langtool()
     sbert = load_sentence_transformer()
     sentiment_analyzer = load_sentiment()
 
     # ---- Grammar check (LanguageTool) ----
-    # Note: LanguageTool returns matches with suggested replacements and offsets.
-    # Because the transcript is unpunctuated, LanguageTool may find fewer sentence-level grammar matches,
-    # but it still catches many common grammar issues (agreement, missing articles, repeated words, etc).
     try:
         lt_matches = langtool.check(transcript)
     except Exception as e:
-        # In some environments the language tool Java server might fail; return graceful fallback.
         lt_matches = []
         print("LanguageTool error:", e)
 
@@ -421,9 +502,6 @@ def analyze_speech(req: AnalyzeRequest):
     topic_string = topic or " ".join(keywords) if keywords else ""
 
     # ---- Embeddings + semantic similarity ----
-    # We'll compute embedding for the transcript and for the topic_string (keywords joined).
-    # If you want to compare against an external 'expected topic' string, pass it in the request,
-    # or change the code to compute embeddings against a topic set.
     try:
         emb_transcript = sbert.encode(transcript, convert_to_tensor=True)
         emb_topic = sbert.encode(topic_string, convert_to_tensor=True)
@@ -444,6 +522,7 @@ def analyze_speech(req: AnalyzeRequest):
         "words_per_minute_est": wpm,
         "duration_reported": duration,
         "speakTime_reported": speakTime,
+        "transcript": transcript,  # Include transcript in response
     }
 
     return {
