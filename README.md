@@ -9,6 +9,9 @@ conda activate yapgem
 pip install -r requirements.txt
 ```
 
+- Might face issues with numpy versions or something.
+- Models do get downloaded only once and are saved locally, subsequent requests then use the cached models reducing latency
+
 ```bash
-fastapi dev
+uvicorn main:app --reload
 ```
