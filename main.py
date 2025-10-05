@@ -271,7 +271,7 @@ def restore_sentence_boundaries(
         return []
     chunks = []
     for i in range(0, len(tokens), max_tokens_per_sentence):
-        chunk = " ".join(tokens[i : i + max_tokens_per_sentence])
+        chunk = " ".join(tokens[i: i + max_tokens_per_sentence])
         chunks.append(simple_preprocess(chunk))
     return chunks
 
@@ -377,7 +377,7 @@ def transcribe_audio_file(audio_path: str, model_size: str = "small") -> str:
     """
     model = load_whisper_model(model_size=model_size)
 
-    segments, info = model.transcribe(audio_path)
+    segments, info = model.transcribe(audio_path, language="en")
     print(f"Detected language: {info.language}")
 
     transcript_parts = []
@@ -452,6 +452,11 @@ async def analyze_speech(
         raise HTTPException(
             status_code=400,
             detail="Could not extract transcript from audio. The audio might be empty or unclear.",
+        )
+    if len(transcript.strip()) < 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Didn't speak enough. Can't give analysis for small corpus.",
         )
 
     transcript = simple_preprocess(transcript)
