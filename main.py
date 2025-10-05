@@ -227,6 +227,26 @@ def load_langtool():
     os.environ["LANGTOOL_HOME"] = "/home/raj/.languagetool"
 
     tool = language_tool_python.LanguageTool("en-US")
+    # Disable capitalization and typography rules
+    disabled_rules = [
+        "UPPERCASE_SENTENCE_START",
+        "PUNCTUATION_PARAGRAPH_END",
+        "UNPAIRED_BRACKETS",
+        "COMMA_PARENTHESIS_WHITESPACE",
+        "WHITESPACE_RULE",
+        "DOUBLE_PUNCTUATION",
+    ]
+
+    # Disable entire categories
+    disabled_categories = ["CASING", "TYPOGRAPHY", "PUNCTUATION"]
+
+    # Apply filters
+    for rule in disabled_rules:
+        tool.disabled_rules.add(rule)
+
+    for category in disabled_categories:
+        tool.disabled_categories.add(category)
+
     return tool
 
 
