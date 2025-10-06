@@ -291,7 +291,7 @@ def restore_sentence_boundaries(
         return []
     chunks = []
     for i in range(0, len(tokens), max_tokens_per_sentence):
-        chunk = " ".join(tokens[i: i + max_tokens_per_sentence])
+        chunk = " ".join(tokens[i : i + max_tokens_per_sentence])
         chunks.append(simple_preprocess(chunk))
     return chunks
 
@@ -390,15 +390,14 @@ def load_whisper_model(model_size: str = "small", compute_type: str = "float16")
     return model
 
 
-def transcribe_audio_file(audio_path: str, model_size: str = "small") -> str:
+def transcribe_audio_file(audio_path: str, model_size: str = "small"):
     """
     Transcribe audio file using Faster Whisper.
     Returns the full transcript as a single string.
     """
     model = load_whisper_model(model_size=model_size)
 
-    segments, info = model.transcribe(audio_path, language="en")
-    print(f"Detected language: {info.language}")
+    segments, info = model.transcribe(audio_path)
 
     transcript_parts = []
     for segment in segments:
@@ -406,7 +405,7 @@ def transcribe_audio_file(audio_path: str, model_size: str = "small") -> str:
         transcript_parts.append(segment.text)
 
     full_transcript = " ".join(transcript_parts)
-    return full_transcript
+    return info.language != "en", full_transcript
 
 
 @app.post("/api/analyze-speech", response_model=AnalyzeResponse)
@@ -451,14 +450,47 @@ async def analyze_speech(
 
         # Transcribe audio using Faster Whisper
         print(f"Starting transcription with model: {whisper_model}")
-        transcript = transcribe_audio_file(temp_audio_path, model_size=whisper_model)
-        print(f"Transcription complete: {len(transcript)} characters")
+        error, transcript = transcribe_audio_file(
+            temp_audio_path, model_size=whisper_model
+        )
 
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Error processing audio file: {str(e)}"
         )
     finally:
+        # if error:
+        # raise HTTPException(status_code=400, detail=transcript)
+        if error:
+            # Build zeroed response consistent with AnalyzeResponse model
+            zeros_extras = {
+                "note": "Language not English; returning zero scores",
+                "transcript": transcript,
+                "duration_reported": duration,
+                "speakTime_reported": speakTime,
+            }
+
+            zero_response = {
+                "grammar_issues": [],
+                "keywords": [],
+                "keyword_scores": {},
+                "topic_string": "",
+                "semantic_similarity": 0.0,
+                "vocabulary_richness": 0.0,
+                "sentence_metrics": {
+                    "num_sentences": 0,
+                    "avg_sentence_length_words": 0.0,
+                    "complexity": {
+                        "flesch_reading_ease": 0.0,
+                        "flesch_kincaid_grade": 0.0,
+                        "avg_syllables_per_word": 0.0,
+                    },
+                },
+                "sentiment": {"neg": 0.0, "neu": 0.0, "pos": 0.0, "compound": 0.0},
+                "extras": zeros_extras,
+            }
+
+            return zero_response
         # Clean up temporary file
         if temp_audio_path and os.path.exists(temp_audio_path):
             try:
